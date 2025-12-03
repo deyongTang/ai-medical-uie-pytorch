@@ -1,206 +1,247 @@
-# Phase 4: 训练与推理 (Training & Inference)
+# Phase 4：从数据到训练与推理的完整实战
 
-## 1. 阶段目标
-本阶段的目标是掌握 UIE 模型的训练和推理流程。我们将深入分析 `finetune.py`（训练脚本）和 `uie_predictor.py`（推理脚本），理解模型是如何学习和应用的。
+> 🎯 目标：带你从零跑通一次 UIE 训练 + 推理，全程对照项目源代码，做到“知道每一行在干什么”。
 
----
+本章按真实开发流程来走：
 
-## 1.1 代码阅读指南 (Code Reading Guide)
+1. 先把原始 CMeIE 数据转换成 UIE 格式（看懂 `convert_data.py`）
+2. 再用一键脚本跑训练（顺着看 `run_training_debug.sh` 和 `finetune.py`）
+3. 最后用训练好的模型做一次推理（阅读 `uie_predictor.py` 的核心逻辑）
 
-为了更高效地掌握 UIE，建议按照以下顺序阅读核心代码：
-
-### 1. 训练脚本 (Training)
-*   **脚本路径**: `uie_pytorch/finetune.py`
-*   **核心函数**: `do_train()` (第 30 行起)
-    *   **重点关注**:
-        *   数据加载 (`IEDataset`, `DataLoader`)
-        *   模型初始化 (`UIE.from_pretrained`)
-        *   **训练循环**: `for epoch in range(num_epochs):` 中的 `loss.backward()` (反向传播) 和 `optimizer.step()` (参数更新)。
-        *   **评估调用**: `evaluate()` 函数。
-
-### 2. 推理脚本 (Inference)
-*   **脚本路径**: `uie_pytorch/uie_predictor.py`
-*   **核心类**: `UIEPredictor` (第 120 行起)
-    *   **重点关注**:
-        *   `predict()`: 推理入口。
-        *   `_multi_stage_predict()`: **核心逻辑**，基于 Schema 树的递归抽取（实体 -> 关系）。
-        *   `_auto_splitter()`: 长文本自动切分逻辑。
+建议边看边在项目根目录开一个终端，把代码和日志一起对照着看。
 
 ---
 
-## 2. 模型训练 (`finetune.py`)
+## 0. 前置准备
 
-训练是让模型适应特定领域数据的过程。UIE 使用微调（Fine-tuning）的方式，在预训练模型的基础上进行训练。
+在项目根目录 `ai-medical/` 下，建议先创建并激活虚拟环境，然后安装依赖：
 
-### 2.1 核心流程 (`do_train`)
+```bash
+cd /Users/deyong/PycharmProjects/medical/ai-medical
+pip install -r uie_pytorch/requirements.txt
+```
 
-训练过程遵循标准的 PyTorch 训练循环：
+确认 `debug_data/` 目录下已有 `train.jsonl`、`dev.jsonl` 等 CMeIE 格式数据。
 
-1.  **数据加载**:
-    *   使用 `IEDataset` 加载训练集和验证集。
-    *   使用 `DataLoader` 进行批处理 (Batching) 和打乱 (Shuffle)。
-2.  **模型初始化**:
-    *   加载预训练模型 (`UIE.from_pretrained`)。
-    *   配置优化器 (`AdamW`)。
-3.  **训练循环 (Epoch Loop)**:
-    *   **前向传播 (Forward)**: 输入 `input_ids` 等，模型输出 `start_prob` 和 `end_prob`。
-    *   **计算损失 (Loss)**: 使用 `BCELoss` 计算 Start 和 End 的损失，取平均值。
-    *   **反向传播 (Backward)**: 计算梯度并更新参数 (`optimizer.step()`)。
-4.  **模型评估 (Evaluation)**:
-    *   每隔一定步数 (`valid_steps`)，在验证集上评估模型性能。
-    *   使用 `SpanEvaluator` 计算 Precision, Recall, F1。
-5.  **模型保存**:
-    *   保存 F1 值最高的模型 (`model_best`)。
-    *   支持早停机制 (`EarlyStopping`) 防止过拟合。
+---
 
-### 2.2 关键参数
+## 1. 总体路线图：从文件到模型
 
-| 参数 | 说明 | 默认值 |
-| :--- | :--- | :--- |
-| `--train_path` | 训练数据路径 | (必填) |
-| `--dev_path` | 验证数据路径 | (必填) |
-| `--save_dir` | 模型保存路径 | `./checkpoint` |
-| `--learning_rate` | 学习率 | `1e-5` |
-| `--batch_size` | 批大小 | `16` |
-| `--num_epochs` | 训练轮数 | `100` |
-### 2.3 PyTorch 训练流程详解 (Training Workflow)
-
-为了帮你更好地理解，我整理了 PyTorch 模型训练的详细流程图：
+先弄清楚整体数据和代码是如何串起来的：
 
 ```mermaid
-graph TD
-    A[开始 Training] --> B{数据准备}
-    B --> C[加载 Dataset & DataLoader]
-    C --> D[初始化模型 Model]
-    D --> E[定义损失函数 Loss Function]
-    E --> F[定义优化器 Optimizer]
-    
-    F --> G[开始 Epoch 循环]
-    G --> H[从 DataLoader 取一个 Batch 数据]
-    H --> I[前向传播 Forward Pass]
-    I --> J[计算损失 Loss]
-    J --> K[反向传播 Backward Pass]
-    K --> L[参数更新 Optimizer Step]
-    L --> M[梯度清零 Zero Grad]
-    
-    M --> N{Batch 循环结束?}
-    N -- No --> H
-    N -- Yes --> O[验证集评估 Evaluation]
-    
-    O --> P{性能提升?}
-    P -- Yes --> Q[保存最佳模型 Checkpoint]
-    P -- No --> R[继续训练]
-    
-    Q --> R
-    R --> S{Epoch 循环结束?}
-    S -- No --> G
-    S -- Yes --> T[结束 Training]
+graph LR
+    A[debug_data/train.jsonl<br/>CMeIE格式] --> B[convert_data.py<br/>数据转换脚本]
+    B --> C[debug_data/train_converted.jsonl<br/>UIE格式]
+    C --> D[run_training_debug.sh<br/>一键训练脚本]
+    D --> E[uie_pytorch/finetune.py::do_train()<br/>UIE训练主循环]
+    E --> F[checkpoint_debug/model_best<br/>训练好的模型]
+    F --> G[uie_pytorch/uie_predictor.py::UIEPredictor<br/>推理/信息抽取]
 ```
 
-**详细步骤说明：**
-
-1.  **数据准备 (Data Preparation)**:
-    *   将原始数据转换为模型可读的格式 (Tensor)。
-    *   `DataLoader` 负责分批次 (Batch) 加载数据，并进行打乱 (Shuffle)。
-
-2.  **前向传播 (Forward Pass)**:
-    *   数据输入模型，经过层层计算，得到预测结果 (`start_prob`, `end_prob`)。
-
-3.  **计算损失 (Loss Calculation)**:
-    *   将预测结果与真实标签 (`start_ids`, `end_ids`) 进行比较。
-    *   UIE 使用 `BCELoss` (二元交叉熵损失) 来衡量预测的准确度。
-
-4.  **反向传播 (Backward Pass)**:
-    *   `loss.backward()`: 根据损失值，计算每个参数的梯度 (Gradient)。梯度告诉我们参数应该往哪个方向调整才能减小损失。
-
-5.  **参数更新 (Optimizer Step)**:
-    *   `optimizer.step()`: 根据计算出的梯度，更新模型的权重参数。
-
-6.  **梯度清零 (Zero Grad)**:
-    *   `optimizer.zero_grad()`: 清空上一步的梯度，防止梯度累加干扰下一次更新。
-
-7.  **评估与保存 (Evaluation & Save)**:
-    *   定期在验证集上测试模型效果 (F1 Score)。
-    *   如果发现当前模型比之前的都好，就把它保存下来 (`model_best`)。
-
----
----
-
-## 3. 模型推理 (`uie_predictor.py`)
-
-推理是利用训练好的模型从新文本中抽取信息的过程。UIE 的推理特点是**基于 Schema 的多阶段抽取**。
-
-### 3.1 Schema 定义
-Schema 定义了我们要抽取什么。它可以是简单的实体列表，也可以是复杂的层级结构。
-
-```python
-# 简单实体抽取
-schema = ['人名', '地名']
-
-# 关系抽取 (层级结构)
-schema = {
-    '人名': [
-        '出生日期',
-        '籍贯'
-    ]
-}
-```
-
-### 3.2 多阶段预测 (`_multi_stage_predict`)
-
-UIE 不会一次性输出所有结果，而是像剥洋葱一样分层抽取：
-
-1.  **第一阶段 (实体抽取)**:
-    *   Prompt: "人名"
-    *   Text: "张三出生于北京"
-    *   Result: 提取出 "张三" (Span: [0, 2])
-
-2.  **第二阶段 (关系/属性抽取)**:
-    *   基于第一阶段的结果，构造新的 Prompt。
-    *   Prompt: "张三的出生日期"
-    *   Text: "张三出生于北京" (原文不变)
-    *   Result: 如果原文有日期，则提取；否则为空。
-
-这种机制使得 UIE 可以处理复杂的嵌套结构和关系抽取。
-
-### 3.3 自动分句 (`_auto_splitter`)
-如果输入文本太长（超过 `max_seq_len`），预测器会自动将其切分为多个短句进行预测，最后再合并结果。
+后面每一小节，都会明确：
+- “现在你应该做什么命令”
+- “这条命令会调用哪个脚本”
+- “脚本里的每一段代码在干什么”
 
 ---
 
-## 4. 评估指标 (`evaluate.py`)
+## 2. 第一步：把 CMeIE 数据转换成 UIE 样本
 
-我们使用 **Span 级别的评估指标**，这意味着预测的开始位置和结束位置必须与标注**完全一致**才算正确。
+### 2.1 先执行命令，再看代码
 
-*   **Precision (精确率)**: 预测出的实体中，有多少是正确的？
-    *   `TP / (TP + FP)`
-*   **Recall (召回率)**: 所有的真实实体中，有多少被预测出来了？
-    *   `TP / (TP + FN)`
-*   **F1 Score**: 精确率和召回率的调和平均数，综合反映模型性能。
-    *   `2 * (P * R) / (P + R)`
-
----
-
-## 5. 实战练习 (Hands-on)
-
-为了方便实战，我们准备了以下工具脚本：
-
-### 5.1 数据转换
-原始的 `debug_data` 是 CMeIE 格式，需要转换为 UIE 格式才能训练。我们提供了 `convert_data.py` 脚本：
+在项目根目录运行（如果已经跑过可以跳过，但建议再跑一遍体会流程）：
 
 ```bash
 # 转换训练集
-python3 convert_data.py --input_file debug_data/train.jsonl --output_file debug_data/train_converted.jsonl
+python3 convert_data.py \
+  --input_file debug_data/train.jsonl \
+  --output_file debug_data/train_converted.jsonl
 
 # 转换验证集
-python3 convert_data.py --input_file debug_data/dev.jsonl --output_file debug_data/dev_converted.jsonl
+python3 convert_data.py \
+  --input_file debug_data/dev.jsonl \
+  --output_file debug_data/dev_converted.jsonl
 ```
 
-### 5.2 运行训练
-我们创建了一个一键训练脚本 `run_training_debug.sh`，它会自动使用 CPU (或 GPU) 在 `debug_data` 上进行训练。
+完成后，可以用 `head` 看一下输出格式：
 
-**脚本内容 (`run_training_debug.sh`)**:
 ```bash
+head -n 3 debug_data/train_converted.jsonl
+```
+
+一行就是一条 UIE 训练样本，典型结构：
+
+```json
+{
+  "content": "原始句子文本",
+  "prompt": "疾病",
+  "result_list": [
+    {"text": "糖尿病", "start": 10, "end": 13}
+  ]
+}
+```
+
+### 2.2 对照源码阅读 `convert_data.py`
+
+文件：`convert_data.py`
+
+#### (1) 总入口：`if __name__ == "__main__":`
+
+```python
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_file", type=str, required=True)
+    parser.add_argument("--output_file", type=str, required=True)
+    args = parser.parse_args()
+    
+    convert_file(args.input_file, args.output_file)
+```
+
+逐行理解：
+- `ArgumentParser()`：声明这是一个命令行脚本
+- `--input_file / --output_file`：对应你刚刚在命令行传入的参数
+- `parse_args()`：解析命令行
+- `convert_file(...)`：用解析出的路径真正去做转换
+
+#### (2) 单文件转换流程：`convert_file`
+
+```python
+def convert_file(input_path, output_path):
+    print(f"Converting {input_path} to {output_path}...")
+    with open(input_path, 'r', encoding='utf-8') as f_in, \
+         open(output_path, 'w', encoding='utf-8') as f_out:
+        
+        for line in tqdm(f_in):
+            try:
+                cmeie_data = json.loads(line)
+                uie_samples = cmeie_to_uie_samples(cmeie_data)
+                for sample in uie_samples:
+                    f_out.write(json.dumps(sample, ensure_ascii=False) + '\n')
+            except Exception as e:
+                print(f"Error processing line: {e}")
+```
+
+关键点：
+- `for line in tqdm(f_in)`：一行一行读原始 CMeIE 数据，并显示进度条
+- `json.loads(line)`：把字符串解析成 Python `dict`
+- `cmeie_to_uie_samples(...)`：核心转换逻辑，一条 CMeIE 可能会变成多条 UIE 样本
+- 写文件时每个 `sample` 再转回 JSON 字符串，一行一条
+
+#### (3) 结构转换核心：`cmeie_to_uie_samples`
+
+```python
+def cmeie_to_uie_samples(cmeie_data):
+    text = cmeie_data['text']
+    spo_list = cmeie_data.get('spo_list', [])
+    
+    uie_samples = []
+    
+    # 用于去重的集合
+    seen_entities = set()
+    seen_relations = set()
+    
+    for spo in spo_list:
+        subject = spo['subject']
+        subject_type = spo['subject_type']
+        predicate = spo['predicate']
+        obj = spo['object']['@value']
+        obj_type = spo['object_type']['@value']
+        ...
+```
+
+你需要理解的几个关键变量：
+- `text`：一条样本的原始句子
+- `spo_list`：CMeIE 中的三元组列表（subject–predicate–object）
+- `seen_entities` / `seen_relations`：防止重复生成同样的样本
+
+函数内部分三类样本构造：
+
+1. **Subject 实体抽取样本**
+   ```python
+   subject_key = (subject_type, subject)
+   if subject_key not in seen_entities:
+       seen_entities.add(subject_key)
+       start = text.find(subject)
+       if start != -1:
+           uie_sample = {
+               "content": text,
+               "prompt": subject_type,
+               "result_list": [{
+                   "text": subject,
+                   "start": start,
+                   "end": start + len(subject)
+               }]
+           }
+           uie_samples.append(uie_sample)
+   ```
+   - Prompt：实体类型（比如“疾病”）
+   - Result：句子中该实体具体出现的位置
+
+2. **Object 实体抽取样本**
+   和 Subject 类似，只是用的是 object 及其类型。
+
+3. **关系抽取样本**
+   ```python
+   relation_key = (subject, predicate, obj)
+   if relation_key not in seen_relations:
+       seen_relations.add(relation_key)
+       start = text.find(obj)
+       if start != -1:
+           uie_sample = {
+               "content": text,
+               "prompt": f"{subject}的{predicate}",
+               "result_list": [{
+                   "text": obj,
+                   "start": start,
+                   "end": start + len(obj)
+               }]
+           }
+           uie_samples.append(uie_sample)
+   ```
+
+理解到这里，你就清楚：
+- CMeIE 的一条样本会拆成多条 UIE 样本
+- UIE 训练只依赖三件事：原始句子、Prompt、目标 span
+
+---
+
+## 3. 第二步：一键脚本跑训练 + 读懂训练主循环
+
+### 3.1 先跑起来：`run_training_debug.sh`
+
+文件：`run_training_debug.sh`
+
+先赋予执行权限并运行：
+
+```bash
+chmod +x run_training_debug.sh
+./run_training_debug.sh
+```
+
+你会看到类似：
+
+```text
+🚀 开始 UIE 模型实战训练 (Debug 模式)...
+Training Epoch 1:  10%|...
+global step 2, epoch: 1, loss: ...
+Evaluation precision: ..., recall: ..., F1: ...
+✅ 训练完成！模型已保存到 ./checkpoint_debug
+```
+
+训练完成后，模型会保存到：
+- `checkpoint_debug/model_best/`：最佳 F1 的模型（推荐推理用）
+
+### 3.2 对照脚本逐行理解
+
+```bash
+#!/bin/bash
+
+set -e
+echo "🚀 开始 UIE 模型实战训练 (Debug 模式)..."
+
+export CUDA_VISIBLE_DEVICES=0
+
 python3 uie_pytorch/finetune.py \
     --train_path "debug_data/train_converted.jsonl" \
     --dev_path "debug_data/dev_converted.jsonl" \
@@ -215,23 +256,420 @@ python3 uie_pytorch/finetune.py \
     --device "cpu"
 ```
 
-**运行方法**:
-```bash
-chmod +x run_training_debug.sh
-./run_training_debug.sh
-```
+行级说明：
+- `set -e`：任何一行命令出错，整个脚本立即退出，避免跑错一半
+- `export CUDA_VISIBLE_DEVICES=0`：可选，指定使用哪块 GPU（这里训练实际用了 `--device "cpu"`）
+- `python3 uie_pytorch/finetune.py \ ...`：真正启动训练
+  - `--train_path / --dev_path`：刚才转换好的 UIE 格式数据
+  - `--save_dir`：模型保存目录
+  - `--learning_rate`：学习率
+  - `--batch_size`：每个 batch 的样本数
+  - `--num_epochs`：训练轮数
+  - `--logging_steps`：每多少 step 打一次训练日志
+  - `--valid_steps`：每多少 step 跑一次验证集
+  - `--device`：`cpu` 或 `gpu`
 
-训练完成后，模型会保存到 `./checkpoint_debug` 目录。
-
-### 5.3 练习建议
-1.  **运行脚本**：观察 Loss 的变化，看模型是否在收敛。
-2.  **查看输出**：检查 `checkpoint_debug` 目录下的文件 (`config.json`, `pytorch_model.bin` 等)。
-3.  **尝试修改参数**：比如修改 `learning_rate` 或 `num_epochs`，看看对训练结果的影响。
-
+建议：你可以改几个参数（例如 `num_epochs=2`）重新跑一遍，观察日志变化。
 
 ---
 
-## 6. 总结
-*   **训练**：通过 `finetune.py` 微调预训练模型，核心是 BCE Loss 和 SpanEvaluator。
-*   **推理**：通过 `uie_predictor.py` 进行多阶段抽取，支持复杂的 Schema 定义。
-*   **评估**：使用 Precision, Recall, F1 衡量 Span 级别的抽取效果。
+## 4. 深入训练核心：读懂 `finetune.py::do_train`
+
+文件：`uie_pytorch/finetune.py`
+
+### 4.1 入口参数解析
+
+底部是标准的命令行入口：
+
+```python
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("-b", "--batch_size", default=16, type=int)
+    parser.add_argument("--learning_rate", default=1e-5, type=float)
+    parser.add_argument("-t", "--train_path", default=None, required=True, type=str)
+    parser.add_argument("-d", "--dev_path", default=None, required=True, type=str)
+    parser.add_argument("-s", "--save_dir", default='./checkpoint', type=str)
+    parser.add_argument("--max_seq_len", default=512, type=int)
+    parser.add_argument("--num_epochs", default=100, type=int)
+    parser.add_argument("--seed", default=1000, type=int)
+    parser.add_argument("--logging_steps", default=10, type=int)
+    parser.add_argument("--valid_steps", default=100, type=int)
+    parser.add_argument("-D", '--device', choices=['cpu', 'gpu'], default="gpu")
+    parser.add_argument("-m", "--model", default="uie_base_pytorch", type=str)
+    parser.add_argument("--max_model_num", default=5, type=int)
+    parser.add_argument("--early_stopping", action='store_true', default=False)
+
+    args = parser.parse_args()
+    do_train()
+```
+
+理解要点：
+- 这里的参数值就来自你在 `run_training_debug.sh` 中传的那些 `--xxx`
+- 全局变量 `args` 会在 `do_train()` 里面被使用
+
+### 4.2 训练准备阶段
+
+```python
+def do_train():
+    set_seed(args.seed)
+    show_bar = True
+
+    tokenizer = BertTokenizerFast.from_pretrained(args.model)
+    model = UIE.from_pretrained(args.model)
+    if args.device == 'gpu':
+        model = model.cuda()
+```
+
+逐句说明：
+- `set_seed(args.seed)`：固定随机种子，保证每次运行结果尽量可复现
+- `show_bar = True`：是否显示 tqdm 进度条
+- `BertTokenizerFast.from_pretrained(args.model)`：
+  - 从 HuggingFace 或本地目录加载分词器
+  - 这里 `args.model="bert-base-chinese"`，表示用 BERT 中文 base 模型
+- `UIE.from_pretrained(args.model)`：
+  - 以同名模型初始化 UIE
+  - 内部会加载对应权重文件
+- `model.cuda()`：如果选择 `gpu`，把模型移动到显存上
+
+接下来是数据集和 DataLoader：
+
+```python
+    train_ds = IEDataset(args.train_path, tokenizer=tokenizer,
+                         max_seq_len=args.max_seq_len)
+    dev_ds = IEDataset(args.dev_path, tokenizer=tokenizer,
+                       max_seq_len=args.max_seq_len)
+
+    train_data_loader = DataLoader(
+        train_ds, batch_size=args.batch_size, shuffle=True)
+    dev_data_loader = DataLoader(
+        dev_ds, batch_size=args.batch_size, shuffle=True)
+```
+
+含义：
+- `IEDataset`：自定义数据集类
+  - 读取 `train_converted.jsonl`
+  - 调用 tokenizer 把文本转成 `input_ids`/`token_type_ids`/`attention_mask`
+  - 同时生成对应的 `start_ids`、`end_ids` 标签
+- `DataLoader`：
+  - 负责按 batch 打包数据、打乱顺序
+
+再往下是优化器和损失函数：
+
+```python
+    optimizer = torch.optim.AdamW(
+        lr=args.learning_rate, params=model.parameters())
+
+    criterion = torch.nn.functional.binary_cross_entropy
+    metric = SpanEvaluator()
+```
+
+- `AdamW`：带权重衰减的 Adam 优化器
+- `criterion`：二元交叉熵损失（Phase 3 已详细讲过）
+- `SpanEvaluator()`：计算 P/R/F1 的工具类
+
+### 4.3 训练主循环：一层一层看
+
+训练核心在两层循环中：
+
+```python
+    epoch_iterator = range(1, args.num_epochs + 1)
+    if show_bar:
+        epoch_iterator = tqdm(epoch_iterator, desc='Training', unit='epoch')
+    for epoch in epoch_iterator:
+        train_data_iterator = train_data_loader
+        if show_bar:
+            train_data_iterator = tqdm(train_data_iterator,
+                                       desc=f'Training Epoch {epoch}',
+                                       unit='batch')
+        for batch in train_data_iterator:
+            ...
+```
+
+含义：
+- 外层 `for epoch in ...`：控制轮数
+- 内层 `for batch in train_data_iterator`：每个 batch 做一次“前向 ➜ 计算 loss ➜ 反向 ➜ 更新参数”
+
+重点看 `for batch in train_data_iterator:` 里面：
+
+```python
+            input_ids, token_type_ids, att_mask, start_ids, end_ids = batch
+            if args.device == 'gpu':
+                input_ids = input_ids.cuda()
+                token_type_ids = token_type_ids.cuda()
+                att_mask = att_mask.cuda()
+                start_ids = start_ids.cuda()
+                end_ids = end_ids.cuda()
+
+            outputs = model(input_ids=input_ids,
+                            token_type_ids=token_type_ids,
+                            attention_mask=att_mask)
+            start_prob, end_prob = outputs[0], outputs[1]
+```
+
+解释：
+- `batch` 来自 `IEDataset.__getitem__`，已经打包好 5 个张量
+- 如果用 GPU，将所有张量 `.cuda()` 到显存
+- `model(...)`：
+  - 内部执行：编码器 + 指针网络（见 Phase 3）
+  - 输出两组概率图：`start_prob`、`end_prob`
+
+接着是损失和反向：
+
+```python
+            start_ids = start_ids.type(torch.float32)
+            end_ids = end_ids.type(torch.float32)
+            loss_start = criterion(start_prob, start_ids)
+            loss_end = criterion(end_prob, end_ids)
+            loss = (loss_start + loss_end) / 2.0
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+```
+
+含义：
+- 标签原本是 0/1（整型），这里转为 `float32`，以适配 `binary_cross_entropy`
+- `loss_start / loss_end`：起止两个指针的 BCE Loss
+- `loss = (loss_start + loss_end) / 2.0`：平均一下，保持平衡
+- `loss.backward()`：计算梯度
+- `optimizer.step()`：根据梯度更新模型参数
+- `optimizer.zero_grad()`：清空上一次的梯度
+
+### 4.4 训练过程中的日志与评估
+
+训练过程中会周期性评估：
+
+```python
+            global_step += 1
+            if global_step % args.logging_steps == 0:
+                ...
+            if global_step % args.valid_steps == 0:
+                dev_loss_avg, precision, recall, f1 = evaluate(
+                    model, metric, data_loader=dev_data_loader,
+                    device=args.device, loss_fn=criterion)
+                ...
+                if f1 > best_f1:
+                    save_dir = os.path.join(args.save_dir, "model_best")
+                    model_to_save = model
+                    model_to_save.save_pretrained(save_dir)
+                    tokenizer.save_pretrained(save_dir)
+```
+
+关键点：
+- `logging_steps`：控制打印训练 loss 的频率
+- `valid_steps`：控制在验证集上评估的频率
+- `evaluate(...)`：计算 dev_loss、P/R/F1
+- `if f1 > best_f1:`：只在 F1 提升时更新 `model_best/`
+
+如果你开启了 `--early_stopping`，最后一段是早停逻辑（当验证集 loss 连续多次不下降就停止训练）。
+
+---
+
+## 5. 第三步：用训练好的模型做推理
+
+这一步的目标：拿 `checkpoint_debug/model_best` 里的权重，跑一次实际预测。
+
+### 5.1 快速体验：直接跑 `uie_predictor.py`
+
+文件：`uie_pytorch/uie_predictor.py`
+
+底部示例：
+
+```python
+if __name__ == '__main__':
+    args = parse_args()
+    args.schema = ['航母']
+    args.schema_lang = "en"
+    uie = UIEPredictor(
+        model=args.model,
+        task_path=args.task_path,
+        schema_lang=args.schema_lang,
+        schema=args.schema,
+        engine=args.engine,
+        device=args.device,
+        position_prob=args.position_prob,
+        max_seq_len=args.max_seq_len,
+        batch_size=64,
+        split_sentence=False,
+        use_fp16=args.use_fp16)
+    print(uie("印媒所称的“印度第一艘国产航母”—“维克兰特”号"))
+```
+
+如果你直接跑：
+
+```bash
+cd uie_pytorch
+python3 uie_predictor.py -m bert-base-chinese -D cpu
+```
+
+会加载 `bert-base-chinese` 对应的 UIE 模型，并按照 `schema=['航母']` 抽取文本中的“航母”实体。这只是官方 Demo。
+
+### 5.2 使用你训练好的模型做推理
+
+我们希望用自己的 checkpoint，因此推荐写一个简单的推理脚本（示例）：
+
+```python
+# 文件：predict_debug.py（你可以放在项目根目录）
+from uie_pytorch.uie_predictor import UIEPredictor
+
+if __name__ == "__main__":
+    schema = ["疾病", "药物"]  # 想抽取的字段
+
+    uie = UIEPredictor(
+        model="bert-base-chinese",                 # 与训练时一致
+        task_path="checkpoint_debug/model_best",   # 训练产出的目录
+        schema=schema,
+        schema_lang="zh",
+        engine="pytorch",
+        device="cpu",
+        position_prob=0.5,
+        max_seq_len=512,
+        batch_size=32,
+        split_sentence=False,
+        use_fp16=False,
+    )
+
+    text = "患者确诊为糖尿病，给予二甲双胍治疗。"
+    print(uie(text))
+```
+
+运行：
+
+```bash
+python3 predict_debug.py
+```
+
+你应该能看到类似：
+
+```python
+[{
+  "疾病": [{"text": "糖尿病", "start": 4, "end": 7, "probability": 0.97}],
+  "药物": [{"text": "二甲双胍", "start": 10, "end": 13, "probability": 0.95}]
+}]
+```
+
+### 5.3 读懂 `UIEPredictor` 的核心流程
+
+类定义在 `uie_pytorch/uie_predictor.py` 中：
+
+#### (1) 初始化：加载模型 + Tokenizer
+
+```python
+class UIEPredictor(object):
+
+    def __init__(self, model, schema, task_path=None, schema_lang="zh",
+                 engine='pytorch', device='cpu', position_prob=0.5,
+                 max_seq_len=512, batch_size=64, split_sentence=False,
+                 use_fp16=False, multilingual=False):
+        ...
+        self._schema_tree = None
+        self._is_en = True if model in ['uie-base-en'] or schema_lang == 'en' else False
+        self.set_schema(schema)
+        self._prepare_predictor()
+```
+
+理解：
+- `schema`：你要抽取的任务描述，可以是简单列表或嵌套字典
+- `schema_lang`：Prompt 用中文还是英文
+- `set_schema(...)`：把 Python 列表/字典变成一棵 `SchemaTree`
+- `_prepare_predictor()`：
+  - 根据 `engine` 选择 PyTorch 或 ONNX
+  - 加载 Tokenizer 和模型权重
+
+#### (2) 调用入口：`__call__` / `predict`
+
+```python
+    def __call__(self, inputs):
+        texts = inputs
+        if isinstance(texts, str):
+            texts = [texts]
+        results = self._multi_stage_predict(texts)
+        return results
+
+    def predict(self, input_data):
+        results = self._multi_stage_predict(input_data)
+        return results
+```
+
+即：
+- 你在 Python 里直接调用 `uie("一段文本")` 或 `uie.predict([...])`
+- 内部统一走 `_multi_stage_predict`
+
+#### (3) 多阶段预测 `_multi_stage_predict`
+
+```python
+    def _multi_stage_predict(self, datas):
+        results = [{} for _ in range(len(datas))]
+        if len(datas) < 1 or self._schema_tree is None:
+            return results
+
+        schema_list = self._schema_tree.children[:]
+        while len(schema_list) > 0:
+            node = schema_list.pop(0)
+            examples = []
+            input_map = {}
+            ...
+            if not node.prefix:
+                # 第一层：直接用 schema 做 prompt
+                for data in datas:
+                    examples.append({
+                        "text": data,
+                        "prompt": dbc2sbc(node.name)
+                    })
+                    ...
+            else:
+                # 子节点：用“父节点抽到的实体”拼接 prompt
+                ...
+
+            if len(examples) == 0:
+                result_list = []
+            else:
+                result_list = self._single_stage_predict(examples)
+            ...
+```
+
+可以这样理解：
+- 第一轮：用最上层 schema（比如 `"疾病"`、`"药物"`）作为 prompt，跑一遍模型
+- 后续轮次：如果 schema 是嵌套的（例如 `{"疾病": ["并发症", "治疗方案"]}`），就会把上一轮抽取出来的实体文本，拼成更具体的 prompt，再跑一遍模型
+- 最终通过 `results` 把所有层级的抽取结果拼成一个结构化字典返回
+
+#### (4) 长文本切分 `_auto_splitter` & 结果合并 `_auto_joiner`
+
+当输入文本太长时：
+- `_auto_splitter`：根据 `max_seq_len` 自动切成多段
+- `_auto_joiner`：把每段结果的 `start/end` 位置重新对齐到原始文本
+
+这部分在长报告、长病历场景下非常重要。
+
+---
+
+## 6. 实战任务清单（建议你真正做一遍）
+
+1. 跑 `convert_data.py`，打开 `train_converted.jsonl`，对照 `cmeie_to_uie_samples` 手工找 1 条样本，看是否理解：
+   - 原始 `spo_list`
+   - 生成了几条 UIE 样本
+2. 打开 `run_training_debug.sh`，修改：
+   - `--num_epochs` 改成 2
+   - `--learning_rate` 改成 `5e-5`
+   - 重新运行脚本，观察 loss 和 F1 的变化
+3. 在 `finetune.py` 中：
+   - 找到 `optimizer = AdamW(...)`，思考如果改成 `Adam` 会有什么影响（可本地实验）
+4. 写一个自己的 `predict_debug.py`：
+   - 自定义 `schema`，例如 `["疾病", "手术", "检查"]`
+   - 输入几条真实的病历文本，观察抽取效果
+5. 阅读 `uie_predictor.py` 中 `_convert_ids_to_results`，确认你能说出：
+   - `start/end` 索引是如何映射回原文的
+   - `probability` 是怎么从模型输出的 logits 转换来的
+
+---
+
+## 7. 小结：把前几章内容真正“跑进代码里”
+
+通过本章你应该做到：
+
+- 能从项目根目录一条命令一条命令地跑通完整训练流程
+- 知道 `convert_data.py`、`run_training_debug.sh`、`finetune.py`、`uie_predictor.py` 各自的责任
+- 对 `do_train` 和 `UIEPredictor` 的每一段核心代码，都能用自己的话解释“为什么要这样写”
+
+建议在 Phase 4 完成后，再回头看 Phase 2 / Phase 3 的理论部分，会更有感觉——因为你已经真正“用这些代码把模型跑起来”了。
+
