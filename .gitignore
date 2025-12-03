@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# Data files - 数据文件不上传
+data/
+debug_data/
+*.jsonl
+*.json
+*.csv
+
+# Model files  - 模型文件不上传
+pretrained/
+*.pt
+*.pth
+*.bin
+*.onnx
+*.h5
+*.pb
+*.safetensors
+*.downloading
+checkpoints/
+saved_models/
+outputs/
+
+# Log files
+*.log
+logs/
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
