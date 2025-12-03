@@ -31,12 +31,12 @@ pip install -r uie_pytorch/requirements.txt
 
 ```mermaid
 graph LR
-    A[debug_data/train.jsonl (CMeIE格式)] --> B[convert_data.py (数据转换脚本)]
-    B --> C[debug_data/train_converted.jsonl (UIE格式)]
-    C --> D[run_training_debug.sh (一键训练脚本)]
-    D --> E[uie_pytorch/finetune.py do_train 训练主循环]
-    E --> F[checkpoint_debug/model_best 训练好的模型]
-    F --> G[uie_pytorch/uie_predictor.py UIEPredictor 推理与信息抽取]
+    A["debug_data/train.jsonl"] --> B["convert_data.py"]
+    B --> C["debug_data/train_converted.jsonl"]
+    C --> D["run_training_debug.sh"]
+    D --> E["uie_pytorch/finetune.py do_train"]
+    E --> F["checkpoint_debug/model_best"]
+    F --> G["uie_pytorch/uie_predictor.py UIEPredictor"]
 ```
 
 后面每一小节，都会明确：
