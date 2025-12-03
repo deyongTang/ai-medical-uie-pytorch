@@ -5,6 +5,29 @@
 
 ---
 
+## 1.1 代码阅读指南 (Code Reading Guide)
+
+为了更高效地掌握 UIE，建议按照以下顺序阅读核心代码：
+
+### 1. 训练脚本 (Training)
+*   **脚本路径**: `uie_pytorch/finetune.py`
+*   **核心函数**: `do_train()` (第 30 行起)
+    *   **重点关注**:
+        *   数据加载 (`IEDataset`, `DataLoader`)
+        *   模型初始化 (`UIE.from_pretrained`)
+        *   **训练循环**: `for epoch in range(num_epochs):` 中的 `loss.backward()` (反向传播) 和 `optimizer.step()` (参数更新)。
+        *   **评估调用**: `evaluate()` 函数。
+
+### 2. 推理脚本 (Inference)
+*   **脚本路径**: `uie_pytorch/uie_predictor.py`
+*   **核心类**: `UIEPredictor` (第 120 行起)
+    *   **重点关注**:
+        *   `predict()`: 推理入口。
+        *   `_multi_stage_predict()`: **核心逻辑**，基于 Schema 树的递归抽取（实体 -> 关系）。
+        *   `_auto_splitter()`: 长文本自动切分逻辑。
+
+---
+
 ## 2. 模型训练 (`finetune.py`)
 
 训练是让模型适应特定领域数据的过程。UIE 使用微调（Fine-tuning）的方式，在预训练模型的基础上进行训练。
