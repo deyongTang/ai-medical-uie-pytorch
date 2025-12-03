@@ -40,7 +40,67 @@
 | `--learning_rate` | 学习率 | `1e-5` |
 | `--batch_size` | 批大小 | `16` |
 | `--num_epochs` | 训练轮数 | `100` |
+### 2.3 PyTorch 训练流程详解 (Training Workflow)
 
+为了帮你更好地理解，我整理了 PyTorch 模型训练的详细流程图：
+
+```mermaid
+graph TD
+    A[开始 Training] --> B{数据准备}
+    B --> C[加载 Dataset & DataLoader]
+    C --> D[初始化模型 Model]
+    D --> E[定义损失函数 Loss Function]
+    E --> F[定义优化器 Optimizer]
+    
+    F --> G[开始 Epoch 循环]
+    G --> H[从 DataLoader 取一个 Batch 数据]
+    H --> I[前向传播 Forward Pass]
+    I --> J[计算损失 Loss]
+    J --> K[反向传播 Backward Pass]
+    K --> L[参数更新 Optimizer Step]
+    L --> M[梯度清零 Zero Grad]
+    
+    M --> N{Batch 循环结束?}
+    N -- No --> H
+    N -- Yes --> O[验证集评估 Evaluation]
+    
+    O --> P{性能提升?}
+    P -- Yes --> Q[保存最佳模型 Checkpoint]
+    P -- No --> R[继续训练]
+    
+    Q --> R
+    R --> S{Epoch 循环结束?}
+    S -- No --> G
+    S -- Yes --> T[结束 Training]
+```
+
+**详细步骤说明：**
+
+1.  **数据准备 (Data Preparation)**:
+    *   将原始数据转换为模型可读的格式 (Tensor)。
+    *   `DataLoader` 负责分批次 (Batch) 加载数据，并进行打乱 (Shuffle)。
+
+2.  **前向传播 (Forward Pass)**:
+    *   数据输入模型，经过层层计算，得到预测结果 (`start_prob`, `end_prob`)。
+
+3.  **计算损失 (Loss Calculation)**:
+    *   将预测结果与真实标签 (`start_ids`, `end_ids`) 进行比较。
+    *   UIE 使用 `BCELoss` (二元交叉熵损失) 来衡量预测的准确度。
+
+4.  **反向传播 (Backward Pass)**:
+    *   `loss.backward()`: 根据损失值，计算每个参数的梯度 (Gradient)。梯度告诉我们参数应该往哪个方向调整才能减小损失。
+
+5.  **参数更新 (Optimizer Step)**:
+    *   `optimizer.step()`: 根据计算出的梯度，更新模型的权重参数。
+
+6.  **梯度清零 (Zero Grad)**:
+    *   `optimizer.zero_grad()`: 清空上一步的梯度，防止梯度累加干扰下一次更新。
+
+7.  **评估与保存 (Evaluation & Save)**:
+    *   定期在验证集上测试模型效果 (F1 Score)。
+    *   如果发现当前模型比之前的都好，就把它保存下来 (`model_best`)。
+
+---
 ---
 
 ## 3. 模型推理 (`uie_predictor.py`)
