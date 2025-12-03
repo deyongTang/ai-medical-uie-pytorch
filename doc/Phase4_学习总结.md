@@ -31,12 +31,12 @@ pip install -r uie_pytorch/requirements.txt
 
 ```mermaid
 graph LR
-    A[debug_data/train.jsonl<br/>CMeIE格式] --> B[convert_data.py<br/>数据转换脚本]
-    B --> C[debug_data/train_converted.jsonl<br/>UIE格式]
-    C --> D[run_training_debug.sh<br/>一键训练脚本]
-    D --> E[uie_pytorch/finetune.py::do_train()<br/>UIE训练主循环]
-    E --> F[checkpoint_debug/model_best<br/>训练好的模型]
-    F --> G[uie_pytorch/uie_predictor.py::UIEPredictor<br/>推理/信息抽取]
+    A[debug_data/train.jsonl (CMeIE格式)] --> B[convert_data.py (数据转换脚本)]
+    B --> C[debug_data/train_converted.jsonl (UIE格式)]
+    C --> D[run_training_debug.sh (一键训练脚本)]
+    D --> E[uie_pytorch/finetune.py do_train 训练主循环]
+    E --> F[checkpoint_debug/model_best 训练好的模型]
+    F --> G[uie_pytorch/uie_predictor.py UIEPredictor 推理与信息抽取]
 ```
 
 后面每一小节，都会明确：
@@ -672,4 +672,3 @@ class UIEPredictor(object):
 - 对 `do_train` 和 `UIEPredictor` 的每一段核心代码，都能用自己的话解释“为什么要这样写”
 
 建议在 Phase 4 完成后，再回头看 Phase 2 / Phase 3 的理论部分，会更有感觉——因为你已经真正“用这些代码把模型跑起来”了。
-
