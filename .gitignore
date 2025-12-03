@@ -49,6 +49,7 @@ pretrained/
 checkpoints/
 saved_models/
 outputs/
+checkpoint_debug/
 
 # Log files
 *.log
