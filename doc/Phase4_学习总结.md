@@ -277,6 +277,9 @@ python3 uie_pytorch/finetune.py \
 
 文件：`uie_pytorch/finetune.py`
 
+> 如果你刚接触 PyTorch，这个脚本会显得有点复杂。  
+> 所以我额外写了一个“教学版”训练脚本 `uie_pytorch/finetune_minimal.py`，建议你两者对照来看（见 4.5 小节）。
+
 ### 4.1 入口参数解析
 
 底部是标准的命令行入口：
@@ -462,6 +465,45 @@ def do_train():
 - `if f1 > best_f1:`：只在 F1 提升时更新 `model_best/`
 
 如果你开启了 `--early_stopping`，最后一段是早停逻辑（当验证集 loss 连续多次不下降就停止训练）。
+
+### 4.5 一个更简单的训练脚本：`finetune_minimal.py`
+
+为了方便你理解整体流程，我在项目里加了一个“极简版本”的训练脚本：
+
+- 路径：`uie_pytorch/finetune_minimal.py`
+- 功能：只保留“加载数据 → 前向 → 计算 loss → 反向更新 → 在 dev 上评估 → 保存 best 模型”这些必要步骤
+- 去掉了：tqdm 进度条、early stopping、多 checkpoint 滚动保存、复杂日志
+
+运行示例（在项目根目录）：
+
+```bash
+python3 uie_pytorch/finetune_minimal.py \
+  --train_path debug_data/train_converted.jsonl \
+  --dev_path debug_data/dev_converted.jsonl \
+  --model bert-base-chinese \
+  --save_dir checkpoint_debug_minimal \
+  --device cpu \
+  --num_epochs 3 \
+  --batch_size 4 \
+  --learning_rate 1e-4
+```
+
+这个脚本的结构非常直观：
+
+- `build_dataloader(...)`：从 UIE 格式 jsonl 构建 `IEDataset` 和 `DataLoader`
+- `move_batch_to_device(...)`：把一个 batch 的 5 个张量移动到 `cpu` / `cuda`
+- `evaluate(...)`：在 dev 集上跑一遍，计算平均 loss 和 P / R / F1
+- `do_train(args)`：
+  - 加载 `BertTokenizerFast` 和 `UIE`
+  - 构建 train/dev `DataLoader`
+  - 创建 `AdamW` 和 BCE Loss
+  - 外层按 `epoch` 循环，内层按 `batch` 做：
+    - `outputs = model(...)` 得到 `start_prob` / `end_prob`
+    - 计算起始/结束 BCE Loss 并取平均
+    - `loss.backward()` + `optimizer.step()` + `optimizer.zero_grad()`
+  - 每个 `epoch` 结束后调用 `evaluate(...)`，只在 F1 提升时保存 `model_best`
+
+如果你想搞清楚“训练到底干了什么”，非常推荐先在 PyCharm 里对着 `finetune_minimal.py` 下断点单步调试，弄明白之后再回来阅读完整版的 `finetune.py`。
 
 ---
 

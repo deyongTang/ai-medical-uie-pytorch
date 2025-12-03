@@ -34,6 +34,7 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 
 loggers = {}
 
+# 日志等级与颜色配置，用于美化终端输出
 log_config = {
     "DEBUG": {"level": 10, "color": "purple"},
     "INFO": {"level": 20, "color": "green"},
@@ -43,9 +44,11 @@ log_config = {
     "ERROR": {"level": 40, "color": "red"},
     "CRITICAL": {"level": 50, "color": "bold_red"},
 }
-
-
 def set_seed(seed):
+    """
+    固定随机种子，保证模型训练结果尽量可复现。
+    会同时设置 Python、NumPy、PyTorch（CPU/GPU）的随机状态。
+    """
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
@@ -55,7 +58,7 @@ def set_seed(seed):
 
 def get_span(start_ids, end_ids, with_prob=False):
     """
-    Get span set from position start and end list.
+    根据起始/结束位置列表，生成不重叠的 span 集合。
 
     Args:
         start_ids (List[int]/List[tuple]): The start index list.
@@ -103,7 +106,7 @@ def get_span(start_ids, end_ids, with_prob=False):
 
 def get_bool_ids_greater_than(probs, limit=0.5, return_prob=False):
     """
-    Get idx of the last dimension in probability arrays, which is greater than a limitation.
+    在概率数组中，筛选出大于给定阈值的位置索引。
 
     Args:
         probs (List[List[float]]): The input probability arrays.
@@ -132,7 +135,7 @@ def get_bool_ids_greater_than(probs, limit=0.5, return_prob=False):
 
 class SpanEvaluator:
     """
-    SpanEvaluator computes the precision, recall and F1-score for span detection.
+    SpanEvaluator 用于计算 span 级别的 Precision / Recall / F1。
     """
 
     def __init__(self):
@@ -143,7 +146,8 @@ class SpanEvaluator:
 
     def compute(self, start_probs, end_probs, gold_start_ids, gold_end_ids):
         """
-        Computes the precision, recall and F1-score for span detection.
+        将概率矩阵与标签矩阵转换成 span 集合，然后统计当前 batch 的
+        正确预测数量 / 预测数量 / 标签数量。
         """
         pred_start_ids = get_bool_ids_greater_than(start_probs)
         pred_end_ids = get_bool_ids_greater_than(end_probs)
@@ -229,12 +233,13 @@ class SpanEvaluator:
 
 class IEDataset(Dataset):
     """
-    Dataset for Information Extraction fron jsonl file.
-    The line type is
+    UIE 信息抽取任务的数据集封装，读取 jsonl 文件。
+
+    每一行样本结构为：
     {
-        content
-        result_list
-        prompt
+        "content": 原始文本,
+        "result_list": 标注的实体/关系 span 列表,
+        "prompt": 当前任务的 prompt
     }
     """
 
@@ -249,20 +254,18 @@ class IEDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, index):
+        # 这里不直接返回原始 json，而是转换成模型需要的张量形式
         return convert_example(
-            self.dataset[index], tokenizer=self.tokenizer, max_seq_len=self.max_seq_len
+            self.dataset[index],
+            tokenizer=self.tokenizer,
+            max_seq_len=self.max_seq_len,
         )
 
 
 class IEMapDataset(Dataset):
     """
-    Dataset for Information Extraction fron jsonl file.
-    The line type is
-    {
-        content
-        result_list
-        prompt
-    }
+    与 IEDataset 类似，只是直接接收已在内存中的 data 列表。
+    用于一些需要先在内存中处理样本再构建 Dataset 的场景。
     """
 
     def __init__(self, data, tokenizer, max_seq_len) -> None:
@@ -282,11 +285,16 @@ class IEMapDataset(Dataset):
 
 def convert_example(example, tokenizer, max_seq_len):
     """
-    example: {
-        title
-        prompt
-        content
-        result_list
+    将一条 json 样本转换为模型输入张量。
+
+    example 结构：
+    {
+        "title": ... (可选字段)
+        "prompt": 提示词 / 任务描述,
+        "content": 原始文本,
+        "result_list": [
+            {"text": 实体文本, "start": 起始字符索引, "end": 结束字符索引}, ...
+        ]
     }
     """
     encoded_inputs = tokenizer(
@@ -298,20 +306,27 @@ def convert_example(example, tokenizer, max_seq_len):
         return_offsets_mapping=True,
     )
     # encoded_inputs = encoded_inputs[0]
+    # offset_mapping 记录每个 token 在原始字符串中的字符范围
     offset_mapping = [list(x) for x in encoded_inputs["offset_mapping"][0]]
+    # bias 用来把 Content 在整体输入中的偏移量加入进去（Prompt 在前）
     bias = 0
     for index in range(1, len(offset_mapping)):
         mapping = offset_mapping[index]
         if mapping[0] == 0 and mapping[1] == 0 and bias == 0:
+            # 第一次遇到 [0, 0] 时，说明 Prompt 结束，Content 开始
+            # +1 是为了跨过中间的 [SEP] 标记
             bias = offset_mapping[index - 1][1] + 1  # Includes [SEP] token
         if mapping[0] == 0 and mapping[1] == 0:
             continue
         offset_mapping[index][0] += bias
         offset_mapping[index][1] += bias
-    start_ids = [0 for x in range(max_seq_len)]
-    end_ids = [0 for x in range(max_seq_len)]
+    # 初始化起始/结束标签，长度固定为 max_seq_len
+    start_ids = [0 for _ in range(max_seq_len)]
+    end_ids = [0 for _ in range(max_seq_len)]
     for item in example["result_list"]:
+        # 标注里的 start/end 是基于 Content 的字符索引，需要加上 bias 映射到总输入
         start = map_offset(item["start"] + bias, offset_mapping)
+        # end 是闭区间，因此这里减 1 再映射到 token
         end = map_offset(item["end"] - 1 + bias, offset_mapping)
         start_ids[start] = 1.0
         end_ids[end] = 1.0
@@ -323,6 +338,7 @@ def convert_example(example, tokenizer, max_seq_len):
         start_ids,
         end_ids,
     ]
+    # 转为 int64 的 numpy 数组
     tokenized_output = [np.array(x, dtype="int64") for x in tokenized_output]
     tokenized_output = [
         np.pad(x, (0, max_seq_len - x.shape[-1]), "constant") for x in tokenized_output
@@ -332,7 +348,8 @@ def convert_example(example, tokenizer, max_seq_len):
 
 def map_offset(ori_offset, offset_mapping):
     """
-    map ori offset to token offset
+    将“原始字符级别的 offset”映射到“token 的索引”。
+    如果找不到对应位置则返回 -1。
     """
     for index, span in enumerate(offset_mapping):
         if span[0] <= ori_offset < span[1]:
@@ -342,19 +359,19 @@ def map_offset(ori_offset, offset_mapping):
 
 def reader(data_path, max_seq_len=512):
     """
-    read json
+    读取 jsonl 文件，如果 content 过长会按照 max_seq_len 自动切分。
     """
     with open(data_path, "r", encoding="utf-8") as f:
         for line in f:
             json_line = json.loads(line)
             content = json_line["content"]
             prompt = json_line["prompt"]
-            # Model Input is aslike: [CLS] Prompt [SEP] Content [SEP]
-            # It include three summary tokens.
+            # 模型输入格式：[CLS] Prompt [SEP] Content [SEP]，共 3 个特殊 token
             if max_seq_len <= len(prompt) + 3:
                 raise ValueError(
                     "The value of max_seq_len is too small, please set a larger value"
                 )
+            # 根据 max_seq_len 预留出 prompt 和 3 个特殊标记，计算 content 的最大长度
             max_content_len = max_seq_len - len(prompt) - 3
             if len(content) <= max_content_len:
                 yield json_line
