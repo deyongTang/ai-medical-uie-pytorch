@@ -65,6 +65,8 @@ def evaluate(model, metric, data_loader, device='gpu', loss_fn=None, show_bar=Tr
         input_ids = input_ids.to(device)
         token_type_ids = token_type_ids.to(device)
         att_mask = att_mask.to(device)
+        start_ids = start_ids.to(device)
+        end_ids = end_ids.to(device)
         outputs = model(input_ids=input_ids,
                         token_type_ids=token_type_ids,
                         attention_mask=att_mask)
