@@ -24,8 +24,8 @@ import torch
 from transformers import (BertTokenizer, PreTrainedModel,
                           PreTrainedTokenizerBase)
 
-from model import UIE
-from utils import logger
+from uie_pytorch.model import UIE
+from uie_pytorch.utils import logger
 
 
 def validate_onnx(tokenizer: PreTrainedTokenizerBase, pt_model: PreTrainedModel, onnx_path: Union[Path, str], strict: bool = True, atol: float = 1e-05):

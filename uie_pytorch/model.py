@@ -19,8 +19,8 @@ from transformers import PretrainedConfig
 from transformers.utils import ModelOutput
 from typing import Optional, Tuple
 
-from ernie import ErnieModel, ErniePreTrainedModel
-from ernie_m import ErnieMModel, ErnieMPreTrainedModel
+from uie_pytorch.ernie import ErnieModel, ErniePreTrainedModel
+from uie_pytorch.ernie_m import ErnieMModel, ErnieMPreTrainedModel
 
 
 @dataclass

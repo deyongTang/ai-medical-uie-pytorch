@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from model import UIE
 import argparse
 from functools import partial
 
@@ -20,7 +19,22 @@ import torch
 from transformers import BertTokenizerFast
 from torch.utils.data import DataLoader
 
-from utils import IEMapDataset, SpanEvaluator, IEDataset, convert_example, get_relation_type_dict, logger, tqdm, unify_prompt_name
+from uie_pytorch.model import UIE
+from uie_pytorch.utils import IEMapDataset, SpanEvaluator, IEDataset, convert_example, get_relation_type_dict, logger, tqdm, unify_prompt_name
+
+
+def get_device(device_arg: str) -> str:
+    """
+    根据命令行参数选择实际使用的 device：
+    - "gpu" 且有 CUDA 时用 "cuda"
+    - "mps" 且支持 MPS 时用 "mps"（Apple Silicon）
+    - 否则回退到 "cpu"
+    """
+    if device_arg == "gpu" and torch.cuda.is_available():
+        return "cuda"
+    if device_arg == "mps" and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 @torch.no_grad()
@@ -43,18 +57,18 @@ def evaluate(model, metric, data_loader, device='gpu', loss_fn=None, show_bar=Tr
     if show_bar:
         data_loader = tqdm(
             data_loader, desc="Evaluating", unit='batch')
+    # 解析为实际设备（cpu / cuda / mps）
+    device = get_device(device)
     for batch in data_loader:
         input_ids, token_type_ids, att_mask, start_ids, end_ids = batch
-        if device == 'gpu':
-            input_ids = input_ids.cuda()
-            token_type_ids = token_type_ids.cuda()
-            att_mask = att_mask.cuda()
+        # 前向计算在与模型相同的 device 上进行
+        input_ids = input_ids.to(device)
+        token_type_ids = token_type_ids.to(device)
+        att_mask = att_mask.to(device)
         outputs = model(input_ids=input_ids,
                         token_type_ids=token_type_ids,
                         attention_mask=att_mask)
         start_prob, end_prob = outputs[0], outputs[1]
-        if device == 'gpu':
-            start_prob, end_prob = start_prob.cpu(), end_prob.cpu()
         start_ids = start_ids.type(torch.float32)
         end_ids = end_ids.type(torch.float32)
 
@@ -74,9 +88,13 @@ def evaluate(model, metric, data_loader, device='gpu', loss_fn=None, show_bar=Tr
                     }
                 )
 
-        # Calcalate metric
-        num_correct, num_infer, num_label = metric.compute(start_prob, end_prob,
-                                                           start_ids, end_ids)
+        # Calcalate metric（在 CPU 上统计 span）
+        num_correct, num_infer, num_label = metric.compute(
+            start_prob.detach().cpu().numpy(),
+            end_prob.detach().cpu().numpy(),
+            start_ids.detach().cpu(),
+            end_ids.detach().cpu(),
+        )
         metric.update(num_correct, num_infer, num_label)
     precision, recall, f1 = metric.accumulate()
     model.train()
@@ -90,8 +108,8 @@ def evaluate(model, metric, data_loader, device='gpu', loss_fn=None, show_bar=Tr
 def do_eval():
     tokenizer = BertTokenizerFast.from_pretrained(args.model_path)
     model = UIE.from_pretrained(args.model_path)
-    if args.device == 'gpu':
-        model = model.cuda()
+    device = get_device(args.device)
+    model = model.to(device)
 
     test_ds = IEDataset(args.test_path, tokenizer=tokenizer,
                         max_seq_len=args.max_seq_len)
@@ -158,8 +176,8 @@ if __name__ == "__main__":
                         help="Batch size per GPU/CPU for training.")
     parser.add_argument("--max_seq_len", type=int, default=512,
                         help="The maximum total input sequence length after tokenization.")
-    parser.add_argument("-D", '--device', choices=['cpu', 'gpu'], default="gpu",
-                        help="Select which device to run model, defaults to gpu.")
+    parser.add_argument("-D", '--device', choices=['cpu', 'gpu', 'mps'], default="gpu",
+                        help="Select which device to run model. cpu / gpu(cuda) / mps(Apple Silicon).")
     parser.add_argument("--debug", action='store_true',
                         help="Precision, recall and F1 score are calculated for each class separately if this option is enabled.")
 

@@ -16,12 +16,11 @@ import re
 import numpy as np
 import six
 
-
 import math
 import argparse
 import os.path
 
-from utils import logger, get_bool_ids_greater_than, get_span, get_id_and_prob, cut_chinese_sent, dbc2sbc
+from uie_pytorch.utils import logger, get_bool_ids_greater_than, get_span, get_id_and_prob, cut_chinese_sent, dbc2sbc
 
 
 class ONNXInferBackend(object):
@@ -81,7 +80,8 @@ class PyTorchInferBackend:
                  multilingual=False,
                  device='cpu',
                  use_fp16=False):
-        from model import UIE, UIEM
+        from uie_pytorch.model import UIE, UIEM
+        import torch
         logger.info(">>> [PyTorchInferBackend] Creating Engine ...")
         if multilingual:
             self.model = UIEM.from_pretrained(model_path_prefix)
@@ -96,6 +96,13 @@ class PyTorchInferBackend:
                     ">>> [PyTorchInferBackend] Use FP16 to inference ...")
                 self.model = self.model.half()
             self.model = self.model.cuda()
+        elif self.device == 'mps':
+            logger.info(">>> [PyTorchInferBackend] Use MPS (Apple Silicon) to inference ...")
+            if torch.backends.mps.is_available():
+                self.model = self.model.to('mps')
+            else:
+                logger.warning(">>> [PyTorchInferBackend] MPS not available, fallback to CPU ...")
+                self.device = 'cpu'
         else:
             logger.info(">>> [PyTorchInferBackend] Use CPU to inference ...")
         logger.info(">>> [PyTorchInferBackend] Engine Created ...")
@@ -106,11 +113,13 @@ class PyTorchInferBackend:
             input_value = torch.LongTensor(input_value)
             if self.device == 'gpu':
                 input_value = input_value.cuda()
+            elif self.device == 'mps':
+                input_value = input_value.to('mps')
             input_dict[input_name] = input_value
 
         outputs = self.model(**input_dict)
         start_prob, end_prob = outputs[0], outputs[1]
-        if self.device == 'gpu':
+        if self.device in ['gpu', 'mps']:
             start_prob, end_prob = start_prob.cpu(), end_prob.cpu()
         start_prob = start_prob.detach().numpy()
         end_prob = end_prob.detach().numpy()
@@ -119,13 +128,14 @@ class PyTorchInferBackend:
 
 class UIEPredictor(object):
 
-    def __init__(self, model, schema, task_path=None, schema_lang="zh", engine='pytorch', device='cpu', position_prob=0.5, max_seq_len=512, batch_size=64, split_sentence=False, use_fp16=False):
+    def __init__(self, model, schema, task_path=None, schema_lang="zh", engine='pytorch', device='cpu',
+                 position_prob=0.5, max_seq_len=512, batch_size=64, split_sentence=False, use_fp16=False):
 
         assert isinstance(
             device, six.string_types
         ), "The type of device must be string."
         assert device in [
-            'cpu', 'gpu'], "The device must be cpu or gpu."
+            'cpu', 'gpu', 'mps'], "The device must be cpu, gpu or mps."
         if model in ['uie-m-base', 'uie-m-large']:
             self._multilingual = True
         else:
@@ -151,14 +161,18 @@ class UIEPredictor(object):
                                 'onnx'], "engine must be pytorch or onnx!"
 
         if self._task_path is None:
-            self._task_path = self._model.replace('-', '_')+'_pytorch'
-            if not os.path.exists(self._task_path):
-                from convert import check_model, extract_and_convert
-                check_model(self._model)
-                extract_and_convert(self._model, self._task_path)
+            # 如果 model 是本地路径且存在，直接使用
+            if os.path.exists(self._model):
+                self._task_path = self._model
+            else:
+                self._task_path = self._model.replace('-', '_') + '_pytorch'
+                if not os.path.exists(self._task_path):
+                    from uie_pytorch.convert import check_model, extract_and_convert
+                    check_model(self._model)
+                    extract_and_convert(self._model, self._task_path)
 
         if self._multilingual:
-            from tokenizer import ErnieMTokenizerFast
+            from uie_pytorch.tokenizer import ErnieMTokenizerFast
             self._tokenizer = ErnieMTokenizerFast.from_pretrained(
                 self._task_path)
         else:
@@ -171,9 +185,10 @@ class UIEPredictor(object):
                 self._task_path, multilingual=self._multilingual, device=self._device, use_fp16=self._use_fp16)
 
         if self._engine == 'onnx':
-            if os.path.exists(os.path.join(self._task_path, "pytorch_model.bin")) and not os.path.exists(os.path.join(self._task_path, "inference.onnx")):
-                from export_model import export_onnx
-                from model import UIE, UIEM
+            if os.path.exists(os.path.join(self._task_path, "pytorch_model.bin")) and not os.path.exists(
+                    os.path.join(self._task_path, "inference.onnx")):
+                from uie_pytorch.export_model import export_onnx
+                from uie_pytorch.model import UIE, UIEM
                 if self._multilingual:
                     model = UIEM.from_pretrained(self._task_path)
                 else:
@@ -307,9 +322,9 @@ class UIEPredictor(object):
                         ) and node.name in relations[i][j]["relations"].keys():
                             for k in range(
                                     len(relations[i][j]["relations"][
-                                        node.name])):
+                                            node.name])):
                                 new_relations[i].append(relations[i][j][
-                                    "relations"][node.name][k])
+                                                            "relations"][node.name][k])
                 relations = new_relations
 
             prefix = [[] for _ in range(len(datas))]
@@ -453,17 +468,17 @@ class UIEPredictor(object):
 
         start_prob_concat, end_prob_concat = [], []
         for batch_start in range(0, len(short_input_texts), self._batch_size):
-            input_ids = encoded_inputs["input_ids"][batch_start:batch_start+self._batch_size]
-            token_type_ids = encoded_inputs["token_type_ids"][batch_start:batch_start+self._batch_size]
-            attention_mask = encoded_inputs["attention_mask"][batch_start:batch_start+self._batch_size]
-            offset_maps = encoded_inputs["offset_mapping"][batch_start:batch_start+self._batch_size]
+            input_ids = encoded_inputs["input_ids"][batch_start:batch_start + self._batch_size]
+            token_type_ids = encoded_inputs["token_type_ids"][batch_start:batch_start + self._batch_size]
+            attention_mask = encoded_inputs["attention_mask"][batch_start:batch_start + self._batch_size]
+            offset_maps = encoded_inputs["offset_mapping"][batch_start:batch_start + self._batch_size]
             if self._multilingual:
                 input_ids = np.array(
                     input_ids, dtype="int64")
                 attention_mask = np.array(
                     attention_mask, dtype="int64")
                 position_ids = (np.cumsum(np.ones_like(input_ids), axis=1)
-                                - np.ones_like(input_ids))*attention_mask
+                                - np.ones_like(input_ids)) * attention_mask
                 input_dict = {
                     "input_ids": input_ids,
                     "attention_mask": attention_mask,
@@ -558,7 +573,7 @@ class UIEPredictor(object):
                     else:
                         for i in range(len(short_results[v])):
                             if 'start' not in short_results[v][
-                                    i] or 'end' not in short_results[v][i]:
+                                i] or 'end' not in short_results[v][i]:
                                 continue
                             short_results[v][i]['start'] += offset
                             short_results[v][i]['end'] += offset
@@ -657,7 +672,7 @@ def parse_args():
     parser.add_argument(
         "-D",
         "--device",
-        choices=['cpu', 'gpu'],
+        choices=['cpu', 'gpu', 'mps'],
         default="gpu",
         help="Select which device to run model, defaults to gpu."
     )
@@ -672,10 +687,20 @@ def parse_args():
     return args
 
 
+"""
+python3 uie_pytorch/uie_predictor.py 
+    --model checkpoint_debug/model_best 
+    --device cpu 
+    --position_prob 0.5 
+    --max_seq_len 512 
+    --engine pytorch
+"""
 if __name__ == '__main__':
     args = parse_args()
     args.schema = ['航母']
     args.schema_lang = "en"
-    uie = UIEPredictor(model=args.model, task_path=args.task_path, schema_lang=args.schema_lang, schema=args.schema, engine=args.engine, device=args.device,
-                       position_prob=args.position_prob, max_seq_len=args.max_seq_len, batch_size=64, split_sentence=False, use_fp16=args.use_fp16)
+    uie = UIEPredictor(model=args.model, task_path=args.task_path, schema_lang=args.schema_lang, schema=args.schema,
+                       engine=args.engine, device=args.device,
+                       position_prob=args.position_prob, max_seq_len=args.max_seq_len, batch_size=64,
+                       split_sentence=False, use_fp16=args.use_fp16)
     print(uie("印媒所称的“印度第一艘国产航母”—“维克兰特”号"))

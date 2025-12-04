@@ -21,10 +21,11 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import BertTokenizerFast
 
-from utils import IEDataset, logger, tqdm
-from model import UIE
-from evaluate import evaluate
-from utils import set_seed, SpanEvaluator, EarlyStopping, logging_redirect_tqdm
+from uie_pytorch.finetune_minimal import get_device
+from uie_pytorch.utils import IEDataset, logger, tqdm
+from uie_pytorch.model import UIE
+from uie_pytorch.evaluate import evaluate
+from uie_pytorch.utils import set_seed, SpanEvaluator, EarlyStopping, logging_redirect_tqdm
 
 
 def do_train():
@@ -45,10 +46,12 @@ def do_train():
     tokenizer = BertTokenizerFast.from_pretrained(args.model)
     # 根据同名 checkpoint 初始化 UIE 模型（编码器 + 指针网络）
     model = UIE.from_pretrained(args.model)
-    if args.device == 'gpu':
-        # 如果指定使用 GPU，则将模型权重移动到显存
-        model = model.cuda()
+    # if args.device == 'gpu':
+    #     # 如果指定使用 GPU，则将模型权重移动到显存
+    #     model = model.cuda()
 
+    device = get_device(args.device)
+    model = model.to(device)
     # 2. 构建训练集 / 验证集 Dataset
     # IEDataset 会读取 UIE 格式的 jsonl，并生成 input_ids / start_ids / end_ids
     train_ds = IEDataset(args.train_path, tokenizer=tokenizer,
@@ -114,13 +117,12 @@ def do_train():
                 epoch_iterator.refresh()
             # batch 中包含：input_ids, token_type_ids, attention_mask, start_ids, end_ids
             input_ids, token_type_ids, att_mask, start_ids, end_ids = batch
-            if args.device == 'gpu':
-                # 如果使用 GPU，将当前 batch 的所有张量移动到显存
-                input_ids = input_ids.cuda()
-                token_type_ids = token_type_ids.cuda()
-                att_mask = att_mask.cuda()
-                start_ids = start_ids.cuda()
-                end_ids = end_ids.cuda()
+            # 将当前 batch 的所有张量统一移动到与模型相同的 device（cpu / cuda / mps）
+            input_ids = input_ids.to(device)
+            token_type_ids = token_type_ids.to(device)
+            att_mask = att_mask.to(device)
+            start_ids = start_ids.to(device)
+            end_ids = end_ids.to(device)
             # 前向传播，得到每个位置为起始/结束的概率分布
             outputs = model(input_ids=input_ids,
                             token_type_ids=token_type_ids,
@@ -178,7 +180,7 @@ def do_train():
                 model_to_save.save_pretrained(save_dir)
                 tokenizer.save_pretrained(save_dir)
                 if args.max_model_num:
-                    model_to_delete = global_step-args.max_model_num*args.valid_steps
+                    model_to_delete = global_step - args.max_model_num * args.valid_steps
                     model_to_delete_path = os.path.join(
                         args.save_dir, "model_%d" % model_to_delete)
                     if model_to_delete > 0 and os.path.exists(model_to_delete_path):
@@ -248,6 +250,30 @@ def do_train():
 
 
 if __name__ == "__main__":
+    # ----------------------------------------------------------------------
+    # 启动示例（在项目根目录 ai-medical 下运行）：
+    #
+    # python3 uie_pytorch/finetune.py \
+    #   --train_path debug_data/train_converted.jsonl \
+    #   --dev_path debug_data/dev_converted.jsonl \
+    #   --save_dir checkpoint_debug \
+    #   --model bert-base-chinese \
+    #   --batch_size 4 \
+    #   --learning_rate 1e-4 \
+    #   --max_seq_len 512 \
+    #   --num_epochs 10 \
+    #   --logging_steps 10 \
+    #   --valid_steps 50 \
+    #   --device gpu \
+    #   --early_stopping
+    #
+    # 说明：
+    # - train_path / dev_path：UIE 格式的训练 / 验证数据（jsonl）
+    # - save_dir：模型 checkpoint 保存目录
+    # - model：预训练模型名称或本地路径
+    # - device：cpu 或 gpu（需要有 CUDA 环境）
+    # - early_stopping：加上此参数则启用早停机制
+    # ----------------------------------------------------------------------
     # yapf: disable
     parser = argparse.ArgumentParser()
 
@@ -262,7 +288,7 @@ if __name__ == "__main__":
     parser.add_argument("-s", "--save_dir", default='./checkpoint', type=str,
                         help="The output directory where the model checkpoints will be written.")
     parser.add_argument("--max_seq_len", default=512, type=int, help="The maximum input sequence length. "
-                        "Sequences longer than this will be split automatically.")
+                                                                     "Sequences longer than this will be split automatically.")
     parser.add_argument("--num_epochs", default=100, type=int,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--seed", default=1000, type=int,
@@ -271,8 +297,9 @@ if __name__ == "__main__":
                         type=int, help="The interval steps to logging.")
     parser.add_argument("--valid_steps", default=100, type=int,
                         help="The interval steps to evaluate model performance.")
-    parser.add_argument("-D", '--device', choices=['cpu', 'gpu'], default="gpu",
-                        help="Select which device to train model, defaults to gpu.")
+    parser.add_argument("-D", '--device', choices=['cpu', 'gpu', 'mps'], default="gpu",
+                        help="Select which device to train model, defaults to gpu. "
+                             "mps 为苹果芯片加速。")
     parser.add_argument("-m", "--model", default="uie_base_pytorch", type=str,
                         help="Select the pretrained model for few-shot learning.")
     parser.add_argument("--max_model_num", default=5, type=int,

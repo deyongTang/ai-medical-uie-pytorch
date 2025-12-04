@@ -20,7 +20,7 @@ import json
 from decimal import Decimal
 import numpy as np
 
-from utils import set_seed, convert_ext_examples, convert_cls_examples, logger
+from uie_pytorch.utils import set_seed, convert_ext_examples, convert_cls_examples, logger
 
 
 def do_convert():

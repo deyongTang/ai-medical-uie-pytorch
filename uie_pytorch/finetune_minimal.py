@@ -23,8 +23,22 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import BertTokenizerFast
 
-from model import UIE
-from utils import IEDataset, SpanEvaluator, set_seed
+from uie_pytorch.model import UIE
+from uie_pytorch.utils import IEDataset, SpanEvaluator, set_seed
+
+
+def get_device(device_arg: str) -> str:
+    """
+    根据命令行参数选择实际使用的 device：
+    - "gpu" 且有 CUDA 时用 "cuda"
+    - "mps" 且支持 MPS 时用 "mps"（Apple Silicon）
+    - 否则回退到 "cpu"
+    """
+    if device_arg == "gpu" and torch.cuda.is_available():
+        return "cuda"
+    if device_arg == "mps" and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 def build_dataloader(path, tokenizer, max_seq_len, batch_size, shuffle):
@@ -39,17 +53,16 @@ def build_dataloader(path, tokenizer, max_seq_len, batch_size, shuffle):
 
 def move_batch_to_device(batch, device):
     """
-    将一个 batch 中的所有张量移动到指定 device（cpu 或 cuda）。
+    将一个 batch 中的所有张量移动到指定 device（cpu / cuda / mps）。
     batch 的结构为：
       input_ids, token_type_ids, attention_mask, start_ids, end_ids
     """
     input_ids, token_type_ids, att_mask, start_ids, end_ids = batch
-    if device == "cuda":
-        input_ids = input_ids.cuda()
-        token_type_ids = token_type_ids.cuda()
-        att_mask = att_mask.cuda()
-        start_ids = start_ids.cuda()
-        end_ids = end_ids.cuda()
+    input_ids = input_ids.to(device)
+    token_type_ids = token_type_ids.to(device)
+    att_mask = att_mask.to(device)
+    start_ids = start_ids.to(device)
+    end_ids = end_ids.to(device)
     return input_ids, token_type_ids, att_mask, start_ids, end_ids
 
 
@@ -67,10 +80,17 @@ def evaluate(model, data_loader, device):
     total_steps = 0
 
     with torch.no_grad():
-        for batch in data_loader:
+        for batch_id, batch in enumerate(data_loader, start=1):
             input_ids, token_type_ids, att_mask, start_ids, end_ids = move_batch_to_device(
                 batch, device
             )
+
+            # 1) 看标签里有多少个 1
+            if batch_id <= 3:
+                print("[DEBUG] dev batch", batch_id,
+                      "start_ids sum =", start_ids.sum().item(),
+                      "end_ids sum =", end_ids.sum().item(),
+                      "num_positions =", start_ids.numel())
 
             outputs = model(
                 input_ids=input_ids,
@@ -79,6 +99,11 @@ def evaluate(model, data_loader, device):
             )
             start_prob, end_prob = outputs[0], outputs[1]
 
+            # 2) 看模型预测的最大概率是多少
+            if batch_id <= 3:
+                print("[DEBUG] dev batch", batch_id,
+                      "start_prob max =", float(start_prob.max()),
+                      "end_prob max =", float(end_prob.max()))
             start_ids = start_ids.type(torch.float32)
             end_ids = end_ids.type(torch.float32)
             loss_start = loss_fn(start_prob, start_ids)
@@ -116,9 +141,9 @@ def do_train(args):
     tokenizer = BertTokenizerFast.from_pretrained(args.model)
     model = UIE.from_pretrained(args.model)
 
-    device = "cuda" if args.device == "gpu" and torch.cuda.is_available() else "cpu"
-    if device == "cuda":
-        model = model.cuda()
+    # 自动根据参数和环境选择 cpu / cuda / mps
+    device = get_device(args.device)
+    model = model.to(device)
     print(f"[INFO] use device = {device}")
 
     # 2. 准备训练 / 验证 DataLoader
@@ -175,7 +200,7 @@ def do_train(args):
                 elapsed = time.time() - start_time
                 print(
                     f"[Train] step={global_step} epoch={epoch} "
-                    f"loss={avg_loss:.4f} speed={args.logging_steps/elapsed:.2f} step/s"
+                    f"loss={avg_loss:.4f} speed={args.logging_steps / elapsed:.2f} step/s"
                 )
                 start_time = time.time()
 
@@ -217,8 +242,8 @@ def parse_args():
                         help="训练轮数")
     parser.add_argument("--max_seq_len", type=int, default=512,
                         help="最大序列长度")
-    parser.add_argument("--device", type=str, choices=["cpu", "gpu"], default="cpu",
-                        help="训练设备，cpu 或 gpu")
+    parser.add_argument("--device", type=str, choices=["cpu", "gpu", "mps"], default="cpu",
+                        help="训练设备，cpu / gpu(cuda) / mps(Apple Silicon)")
     parser.add_argument("--seed", type=int, default=1000,
                         help="随机种子")
     parser.add_argument("--logging_steps", type=int, default=10,
@@ -229,4 +254,3 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     do_train(args)
-

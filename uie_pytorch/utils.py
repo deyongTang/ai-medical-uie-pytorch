@@ -44,6 +44,8 @@ log_config = {
     "ERROR": {"level": 40, "color": "red"},
     "CRITICAL": {"level": 50, "color": "bold_red"},
 }
+
+
 def set_seed(seed):
     """
     固定随机种子，保证模型训练结果尽量可复现。
@@ -116,6 +118,9 @@ def get_bool_ids_greater_than(probs, limit=0.5, return_prob=False):
         List[List[int]]: The index of the last dimension meet the conditions.
     """
     probs = np.array(probs)
+    """
+    len(probs.shape) = 数组的维度（Rank）
+    """
     dim_len = len(probs.shape)
     if dim_len > 1:
         result = []
@@ -157,7 +162,7 @@ class SpanEvaluator:
         num_infer_spans = 0
         num_label_spans = 0
         for predict_start_ids, predict_end_ids, label_start_ids, label_end_ids in zip(
-            pred_start_ids, pred_end_ids, gold_start_ids, gold_end_ids
+                pred_start_ids, pred_end_ids, gold_start_ids, gold_end_ids
         ):
             [_correct, _infer, _label] = self.eval_span(
                 predict_start_ids, predict_end_ids, label_start_ids, label_end_ids
@@ -177,7 +182,7 @@ class SpanEvaluator:
         self.num_correct_spans += num_correct_spans
 
     def eval_span(
-        self, predict_start_ids, predict_end_ids, label_start_ids, label_end_ids
+            self, predict_start_ids, predict_end_ids, label_start_ids, label_end_ids
     ):
         """
         evaluate position extraction (start, end)
@@ -536,7 +541,6 @@ class Logger(object):
 
 logger = Logger()
 
-
 BAR_FORMAT = f"{{desc}}: {Fore.GREEN}{{percentage:3.0f}}%{Fore.RESET} {Fore.BLUE}{{bar}}{Fore.RESET}  {Fore.GREEN}{{n_fmt}}/{{total_fmt}} {Fore.RED}{{rate_fmt}}{{postfix}}{Fore.RESET} eta {Fore.CYAN}{{remaining}}{Fore.RESET}"
 BAR_FORMAT_NO_TIME = f"{{desc}}: {Fore.GREEN}{{percentage:3.0f}}%{Fore.RESET} {Fore.BLUE}{{bar}}{Fore.RESET}  {Fore.GREEN}{{n_fmt}}/{{total_fmt}}{Fore.RESET}"
 BAR_TYPE = ["░▝▗▖▘▚▞▛▙█", "░▖▘▝▗▚▞█", " ▖▘▝▗▚▞█", "░▒█", " >=", " ▏▎▍▌▋▊▉█░▏▎▍▌▋▊▉█"]
@@ -596,12 +600,12 @@ class EarlyStopping:
     """Early stops the training if validation loss doesn't improve after a given patience."""
 
     def __init__(
-        self,
-        patience=7,
-        verbose=False,
-        delta=0,
-        save_dir="checkpoint/early_stopping",
-        trace_func=print,
+            self,
+            patience=7,
+            verbose=False,
+            delta=0,
+            save_dir="checkpoint/early_stopping",
+            trace_func=print,
     ):
         """
         Args:
@@ -621,7 +625,8 @@ class EarlyStopping:
         self.counter = 0
         self.best_score = None
         self.early_stop = False
-        self.val_loss_min = np.Inf
+        # 兼容 NumPy 2.0+：np.Inf 已被移除，使用 np.inf
+        self.val_loss_min = np.inf
         self.delta = delta
         self.save_dir = save_dir
         self.trace_func = trace_func
@@ -767,7 +772,7 @@ def add_relation_negative_example(redundants, text, num_positive, ratio):
 
 
 def add_full_negative_example(
-    examples, texts, relation_prompts, predicate_set, subject_goldens
+        examples, texts, relation_prompts, predicate_set, subject_goldens
 ):
     with tqdm(total=len(relation_prompts)) as pbar:
         for i, relation_prompt in enumerate(relation_prompts):
@@ -805,7 +810,7 @@ def generate_cls_example(text, labels, prompt_prefix, options):
 
 
 def convert_cls_examples(
-    raw_examples, prompt_prefix="情感倾向", options=["正向", "负向"]
+        raw_examples, prompt_prefix="情感倾向", options=["正向", "负向"]
 ):
     """
     Convert labeled data export from doccano for classification task.
@@ -826,12 +831,12 @@ def convert_cls_examples(
 
 
 def convert_ext_examples(
-    raw_examples,
-    negative_ratio,
-    prompt_prefix="情感倾向",
-    options=["正向", "负向"],
-    separator="##",
-    is_train=True,
+        raw_examples,
+        negative_ratio,
+        prompt_prefix="情感倾向",
+        options=["正向", "负向"],
+        separator="##",
+        is_train=True,
 ):
     """
     Convert labeled data export from doccano for extraction and aspect-level classification task.
@@ -864,8 +869,8 @@ def convert_ext_examples(
             if "data" in items.keys():
                 relation_mode = False
                 if (
-                    isinstance(items["label"], dict)
-                    and "entities" in items["label"].keys()
+                        isinstance(items["label"], dict)
+                        and "entities" in items["label"].keys()
                 ):
                     relation_mode = True
                 text = items["data"]
@@ -922,7 +927,7 @@ def convert_ext_examples(
             entity_example_map = {}
             entity_map = {}  # id to entity name
             for entity in entities:
-                entity_name = text[entity["start_offset"] : entity["end_offset"]]
+                entity_name = text[entity["start_offset"]: entity["end_offset"]]
                 entity_map[entity["id"]] = {
                     "name": entity_name,
                     "start": entity["start_offset"],

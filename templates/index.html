@@ -5,8 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>智能医疗助手</title>
-    <script src="/static/marked.min.js"></script>
-    <script src="/static/purify.min.js"></script>
+    <script src="{{ url_for('static', filename='marked.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='purify.min.js') }}"></script>
     <style>
         :root {
             --border-radius: 16px;

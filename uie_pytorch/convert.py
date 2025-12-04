@@ -27,11 +27,11 @@ try:
     from paddle.utils.download import get_path_from_url
     paddle_installed = True
 except (ImportError, ModuleNotFoundError):
-    from utils import get_path_from_url
+    from uie_pytorch.utils import get_path_from_url
     paddle_installed = False
 
-from model import UIE, UIEM
-from utils import logger
+from uie_pytorch.model import UIE, UIEM
+from uie_pytorch.utils import logger
 
 MODEL_MAP = {
     # vocab.txt/special_tokens_map.json/tokenizer_config.json are common to the default model.

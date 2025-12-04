@@ -22,7 +22,7 @@ except ImportError as e:
 from transformers.tokenization_utils import AddedToken, PreTrainedTokenizer
 from transformers.utils import SPIECE_UNDERLINE
 
-from utils import logger
+from uie_pytorch.utils import logger
 
 
 VOCAB_FILES_NAMES = {
